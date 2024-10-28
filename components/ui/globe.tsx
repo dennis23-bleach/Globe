@@ -1,10 +1,14 @@
 "use client";
 
-import createGlobe, { COBEOptions } from "cobe";
+import createGlobe, { COBEOptions, Marker as CobeMarker } from "cobe";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
-const GLOBE_CONFIG: COBEOptions = {
+interface Marker extends CobeMarker {
+  label?: string;
+}
+
+const GLOBE_CONFIG: Omit<COBEOptions, 'markers'> & { markers: Marker[] } = {
   width: 800,
   height: 800,
   onRender: () => {},
@@ -32,39 +36,21 @@ const GLOBE_CONFIG: COBEOptions = {
   ],
 };
 
-interface Marker {
-  location: [number, number];
-  size: number;
-  label: string;
-}
-
-interface GlobeRenderState {
-  phi: number;
-  theta: number;
-  width: number;
-  height: number;
-  globe: {
-    getProjection: () => (latLon: [number, number]) => [number, number];
-  };
-  [key: string]: any; // Include any additional properties
-}
-
 export function Globe({
   className,
   config = GLOBE_CONFIG,
 }: {
   className?: string;
-  config?: COBEOptions;
+  config?: Omit<COBEOptions, 'markers'> & { markers: Marker[] };
 }) {
+  const [hoveredMarker, setHoveredMarker] = useState<Marker | null>(null);
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const phi = useRef(0);
   const width = useRef(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pointerInteracting = useRef<number | null>(null);
   const pointerInteractionMovement = useRef<number>(0);
   const r = useRef(0);
-  const [labels, setLabels] = useState<
-    { x: number; y: number; label: string }[]
-  >([]);
 
   const updatePointerInteraction = (value: number | null) => {
     pointerInteracting.current = value;
@@ -81,59 +67,18 @@ export function Globe({
     }
   };
 
-  const markersScreenPos = useRef<{ x: number; y: number; label: string }[]>(
-    []
-  );
-
-  const onRender = useCallback(
-    (state: Record<string, any>) => {
-      // Type cast state to GlobeRenderState
-      const globeState = state as GlobeRenderState;
-
-      if (!pointerInteracting.current) phi.current += 0.005;
-      globeState.phi = phi.current + r.current;
-      globeState.width = width.current * 2;
-      globeState.height = width.current * 2;
-
-      // Calculate screen positions of markers
-      const projection = globeState.globe.getProjection();
-      markersScreenPos.current = (config.markers as Marker[]).map((marker) => {
-        const [lat, lon] = marker.location;
-        const [x, y] = projection([lat, lon]);
-        // Transform from [-1, 1] to screen coordinates
-        return {
-          x: ((x + 1) / 2) * globeState.width,
-          y: ((1 - y) / 2) * globeState.height,
-          label: marker.label,
-        };
-      });
-    },
-    [config.markers]
-  );
+  const onRender = useCallback(() => {
+    if (!pointerInteracting.current) phi.current += 0.005;
+    return {
+      phi: phi.current + r.current,
+      width: width.current * 2,
+      height: width.current * 2,
+    };
+  }, []);
 
   const onResize = () => {
     if (canvasRef.current) {
       width.current = canvasRef.current.offsetWidth;
-    }
-  };
-
-  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const clickX = (e.clientX - rect.left) * 2; // Adjust for devicePixelRatio
-    const clickY = (e.clientY - rect.top) * 2;
-
-    // Find the marker closest to the click position
-    const clickedMarker = markersScreenPos.current.find((marker) => {
-      const dx = marker.x - clickX;
-      const dy = marker.y - clickY;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      return distance < 10; // Adjust the threshold as needed
-    });
-
-    if (clickedMarker) {
-      setLabels([clickedMarker]);
-    } else {
-      setLabels([]);
     }
   };
 
@@ -145,7 +90,13 @@ export function Globe({
       ...config,
       width: width.current * 2,
       height: width.current * 2,
-      onRender,
+      onRender: (state) => {
+        const result = onRender();
+        if (state.marker) {
+          setHoveredMarker(state.marker as Marker);
+        }
+        return result;
+      },
     });
 
     setTimeout(() => {
@@ -154,16 +105,18 @@ export function Globe({
       }
     });
 
-    return () => {
-      window.removeEventListener("resize", onResize);
-      globe.destroy();
-    };
+    return () => globe.destroy();
   }, [config, onRender]);
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    updateMovement(e.clientX);
+    setMousePosition({ x: e.clientX, y: e.clientY });
+  };
 
   return (
     <div
       className={cn(
-        "relative mx-auto aspect-[1/1] w-full max-w-[600px]",
+        "absolute inset-0 mx-auto aspect-[1/1] w-full max-w-[600px]",
         className
       )}
     >
@@ -178,26 +131,24 @@ export function Globe({
           )
         }
         onPointerUp={() => updatePointerInteraction(null)}
-        onPointerOut={() => updatePointerInteraction(null)}
-        onMouseMove={(e) => updateMovement(e.clientX)}
-        onTouchMove={(e) =>
-          e.touches[0] && updateMovement(e.touches[0].clientX)
-        }
-        onClick={handleClick}
+        onPointerOut={() => {
+          updatePointerInteraction(null);
+          setHoveredMarker(null);
+        }}
+        onMouseMove={handleMouseMove}
+        onTouchMove={(e) => e.touches[0] && updateMovement(e.touches[0].clientX)}
       />
-      {/* Labels */}
-      {labels.map((labelInfo, index) => (
+      {hoveredMarker && hoveredMarker.label && (
         <div
-          key={index}
-          className="absolute bg-white text-black p-1 rounded"
+          className="absolute pointer-events-none bg-black/75 text-white px-2 py-1 rounded-md text-sm"
           style={{
-            left: labelInfo.x / 2 - 50, // Adjust for devicePixelRatio and label width
-            top: labelInfo.y / 2 - 30, // Adjust for devicePixelRatio and label height
+            left: mousePosition.x + 10,
+            top: mousePosition.y + 10,
           }}
         >
-          {labelInfo.label}
+          {hoveredMarker.label}
         </div>
-      ))}
+      )}
     </div>
   );
 }
