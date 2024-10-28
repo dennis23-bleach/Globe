@@ -1,7 +1,7 @@
 "use client";
 
 import createGlobe, { COBEOptions } from "cobe";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 
 const GLOBE_CONFIG: COBEOptions = {
@@ -39,12 +39,12 @@ export function Globe({
   className?: string;
   config?: COBEOptions;
 }) {
-  let phi = 0;
-  let width = 0;
+  const phi = useRef(0);
+  const width = useRef(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pointerInteracting = useRef<number | null>(null);
   const pointerInteractionMovement = useRef<number>(0);
-  const [r, setR] = useState(0);
+  const r = useRef(0);
 
   const updatePointerInteraction = (value: number | null) => {
     pointerInteracting.current = value;
@@ -57,25 +57,22 @@ export function Globe({
     if (pointerInteracting.current !== null) {
       const delta = clientX - pointerInteracting.current;
       pointerInteractionMovement.current = delta;
-      setR(delta / 200);
+      r.current = delta / 200;
     }
   };
 
-  const onRender = useCallback(
-    (state: Record<string, number>) => {
-      const typedState = state as { phi: number; width: number; height: number };
-
-      if (!pointerInteracting.current) phi += 0.005;
-      typedState.phi = phi + r;
-      typedState.width = width * 2;
-      typedState.height = width * 2;
-    },
-    [r]
-  );
+  const onRender = useCallback(() => {
+    if (!pointerInteracting.current) phi.current += 0.005;
+    return {
+      phi: phi.current + r.current,
+      width: width.current * 2,
+      height: width.current * 2,
+    };
+  }, []);
 
   const onResize = () => {
     if (canvasRef.current) {
-      width = canvasRef.current.offsetWidth;
+      width.current = canvasRef.current.offsetWidth;
     }
   };
 
@@ -85,8 +82,8 @@ export function Globe({
 
     const globe = createGlobe(canvasRef.current!, {
       ...config,
-      width: width * 2,
-      height: width * 2,
+      width: width.current * 2,
+      height: width.current * 2,
       onRender,
     });
 
